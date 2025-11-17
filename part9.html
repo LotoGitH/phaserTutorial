@@ -38,6 +38,9 @@
     var cursors;
     var score = 0;
     var scoreText;
+    // Doble salto: permite 1 salto adicional en el aire
+    var airJumps = 0;
+    var maxAirJumps = 1;
 
     var game = new Phaser.Game(config);
 
@@ -111,6 +114,7 @@
 
     function update ()
     {
+        // Movimiento horizontal
         if (cursors.left.isDown)
         {
             player.setVelocityX(-160);
@@ -130,9 +134,30 @@
             player.anims.play('turn');
         }
 
-        if (cursors.up.isDown && player.body.touching.down)
+        // Determinar si está en el suelo (tocando una plataforma o el piso)
+        var onGround = player.body.touching.down; // para Arcade + staticGroup
+
+        // Reinicia los saltos en aire al tocar el suelo
+        if (onGround)
         {
-            player.setVelocityY(-330);
+            airJumps = 0;
+        }
+
+        // Lógica de salto con "just pressed" para evitar repetición por mantener pulsado
+        var jumpPressed = Phaser.Input.Keyboard.JustDown(cursors.up);
+        if (jumpPressed)
+        {
+            if (onGround)
+            {
+                // Salto normal desde el suelo
+                player.setVelocityY(-330);
+            }
+            else if (airJumps < maxAirJumps)
+            {
+                // Doble salto en el aire
+                player.setVelocityY(-330);
+                airJumps++;
+            }
         }
     }
 
