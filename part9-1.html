@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <title>Making your first Phaser 3 Game - Part 9</title>
+    <script src="//cdn.jsdelivr.net/npm/phaser@3.11.0/dist/phaser.js"></script>
+    <style type="text/css">
+        body {
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+
+<script type="text/javascript">
+
+    var config = {
+        type: Phaser.AUTO,
+        width: 800,
+        height: 600,
+        physics: {
+            default: 'arcade',
+            arcade: {
+                gravity: {y: 300},
+                debug: false
+            }
+        },
+        scene: {
+            preload: preload,
+            create: create,
+            update: update
+        }
+    };
+
+    var player;
+    var stars;
+    var platforms;
+    var cursors;
+    var score = 0;
+    var scoreText;
+    var highScoreText;
+    // Doble salto: permite 1 salto adicional en el aire
+    var airJumps = 0;
+    var maxAirJumps = 1;
+
+    var game = new Phaser.Game(config);
+
+    function preload() {
+        this.load.image('sky', 'assets/sky.png');
+        this.load.image('ground', 'assets/platform.png');
+        this.load.image('star', 'assets/star.png');
+        this.load.image('bomb', 'assets/bomb.png');
+        this.load.spritesheet('dude', 'assets/dude.png', {frameWidth: 32, frameHeight: 48});
+    }
+
+    function create() {
+        // ===================== LÓGICA DE CÁMARA (SEGUIMIENTO) =====================
+        // Establecemos los límites (bounds) de la cámara principal para que pueda
+        // desplazarse a lo largo de un nivel más ancho que el lienzo visible.
+        // - El canvas visible es 800x600 (config.width/height), pero el "mundo"
+        //   (nuestro nivel) tendrá 1920x600. Si no definimos estos bounds la cámara
+        //   no podría moverse más allá del área visible inicial.
+        // - setBounds(x, y, width, height) indica el rectángulo total por el que
+        //   la cámara puede desplazarse.
+        this.cameras.main.setBounds(0, 0, 1920, 600);
+
+        // Fondo fijo: el cielo se "ancla" a la cámara usando setScrollFactor(0)
+        // - Un scrollFactor de 0 significa: este objeto NO se desplaza cuando la
+        //   cámara se mueve (efecto HUD o cielo fijo). Ideal para UI o fondos
+        //   simples. Si quisiéramos un parallax, usaríamos valores entre 0 y 1.
+        this.add.image(400, 300, 'sky').setScrollFactor(0);
+
+        platforms = this.physics.add.staticGroup();
+
+        // Extiende la primera plataforma a todo lo largo del nivel (1920px)
+        var ground = platforms.create(960, 568, 'ground');
+        ground.setScale(4.8, 2).refreshBody(); // 400px de ancho original * 4.8 = 1920px
+
+        platforms.create(600, 400, 'ground');
+        platforms.create(50, 250, 'ground');
+        platforms.create(750, 220, 'ground');
+        platforms.create(1000, 400, 'ground');
+        platforms.create(1750, 220, 'ground');
+
+        player = this.physics.add.sprite(100, 450, 'dude');
+
+        player.setBounce(0.2);
+        player.setCollideWorldBounds(true);
+        // Muy importante: hacer coincidir los límites del MUNDO FÍSICO con los de la cámara
+        // - De este modo, el jugador y los objetos físicos no "caen" fuera de un
+        //   área más pequeña que el mundo real. Aquí el mundo de físicas tiene el
+        //   mismo tamaño que el nivel (1920x600).
+        this.physics.world.setBounds(0, 0, 1920, 600);
+
+        // Redondeo de píxeles para evitar artefactos sub‑píxel cuando la cámara
+        // sigue al jugador (especialmente en pixel art).
+        this.cameras.main.setRoundPixels(true);
+
+        // Hacer que la cámara SIGA al jugador
+        // startFollow(target, roundPixels, lerpX, lerpY, offsetX, offsetY)
+        // - target: el objeto a seguir (player).
+        // - roundPixels (true): redondea internamente la posición para evitar
+        //   desenfoque/temblores de sprites.
+        // - lerpX / lerpY: factores de suavizado (0..1). Con 1, la cámara se
+        //   "engancha" inmediatamente al objetivo (sin retraso). Con valores
+        //   menores (p. ej. 0.1) conseguiríamos un seguimiento suave/parcial.
+        this.cameras.main.startFollow(player, true, 1, 1);
+
+        // Offset de seguimiento
+        // - Por defecto la cámara centra el objetivo. Con setFollowOffset podemos
+        //   desplazar ese punto de enfoque. Aquí lo dejamos en (0,0) para centrar
+        //   exactamente al jugador en pantalla.
+        this.cameras.main.setFollowOffset(0, 0);
+
+        this.anims.create({
+            key: 'left',
+            frames: this.anims.generateFrameNumbers('dude', {start: 0, end: 3}),
+            frameRate: 10,
+            repeat: -1
+        });
+
+        this.anims.create({
+            key: 'turn',
+            frames: [{key: 'dude', frame: 4}],
+            frameRate: 20
+        });
+
+        this.anims.create({
+            key: 'right',
+            frames: this.anims.generateFrameNumbers('dude', {start: 5, end: 8}),
+            frameRate: 10,
+            repeat: -1
+        });
+
+        cursors = this.input.keyboard.createCursorKeys();
+
+        stars = this.physics.add.group({
+            key: 'star',
+            repeat: 25,
+            setXY: {x: 12, y: 0, stepX: 70}
+        });
+
+        stars.children.iterate(function (child) {
+
+            child.setBounceY(Phaser.Math.FloatBetween(0.4, 0.8));
+
+        });
+
+        // UI anclada a la pantalla: textos con scrollFactor(0) para que NO
+        // se desplacen cuando la cámara siga al jugador.
+        scoreText = this.add.text(16, 16, 'score: 0', {fontSize: '32px', fill: '#000'}).setScrollFactor(0);
+        highScoreText = this.add.text(480, 16,
+            'High score: ' + (localStorage.getItem("score") ? localStorage.getItem("score") : 0),
+            {fontSize: '32px', fill: '#000'}).setScrollFactor(0);
+        // ======================================================================
+
+        this.physics.add.collider(player, platforms);
+        this.physics.add.collider(stars, platforms);
+
+        this.physics.add.overlap(player, stars, collectStar, null, this);
+    }
+
+    function update() {
+        // Movimiento horizontal
+        if (cursors.left.isDown) {
+            player.setVelocityX(-160);
+
+            player.anims.play('left', true);
+        } else if (cursors.right.isDown) {
+            player.setVelocityX(160);
+
+            player.anims.play('right', true);
+        } else {
+            player.setVelocityX(0);
+
+            player.anims.play('turn');
+        }
+
+        // Determinar si está en el suelo (tocando una plataforma o el piso)
+        var onGround = player.body.touching.down; // para Arcade + staticGroup
+
+        // Reinicia los saltos en aire al tocar el suelo
+        if (onGround) {
+            airJumps = 0;
+        }
+
+        // Lógica de salto con "just pressed" para evitar repetición por mantener pulsado
+        var jumpPressed = Phaser.Input.Keyboard.JustDown(cursors.up);
+        if (jumpPressed) {
+            if (onGround) {
+                // Salto normal desde el suelo
+                player.setVelocityY(-330);
+            } else if (airJumps < maxAirJumps) {
+                // Doble salto en el aire
+                player.setVelocityY(-330);
+                airJumps++;
+            }
+        }
+    }
+
+    function collectStar(player, star) {
+        star.disableBody(true, true);
+
+        score += 10;
+        scoreText.setText('Score: ' + score);
+
+        if (score > Number(localStorage.getItem("score"))) {
+            localStorage.setItem('score', score);
+            highScoreText.setText('High Score: ' + score);
+        }
+    }
+
+</script>
+
+</body>
+</html>
